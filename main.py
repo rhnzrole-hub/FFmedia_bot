@@ -26,6 +26,13 @@ signal.signal(signal.SIGTERM, handle_exit)
 if hasattr(signal, "SIGBREAK"):
     signal.signal(signal.SIGBREAK, handle_exit)
 
+# Logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
+)
+logger = logging.getLogger("FFMediaBot")
+
 from hydrogram import Client, filters, StopTransmission
 from hydrogram.types import (
     Message,
@@ -34,7 +41,7 @@ from hydrogram.types import (
 
 import config
 
-# Apply C-accelerated PyCryptodome hardware engines (~470x faster MTProto encryption/decryption)
+# Apply high-speed cryptography (TgCrypto C-accelerated engine / PyCryptodome fallback)
 import speedups
 speedups.apply_speedups()
 
@@ -115,13 +122,6 @@ from keyboards import (
     get_cancel_process_keyboard,
     get_settings_keyboard,
 )
-
-# Logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
-)
-logger = logging.getLogger("FFMediaBot")
 
 # Validate configuration
 if not config.API_ID or not config.API_HASH or not config.BOT_TOKEN:
