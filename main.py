@@ -135,7 +135,7 @@ app = Client(
     api_hash=config.API_HASH,
     bot_token=config.BOT_TOKEN,
     workers=16,
-    max_concurrent_transmissions=2,
+    max_concurrent_transmissions=8,
     sleep_threshold=60,
 )
 
