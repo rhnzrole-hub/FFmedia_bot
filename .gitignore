@@ -1,0 +1,10 @@
+.env
+*.session*
+__pycache__/
+*.pyc
+downloads/
+thumbnails/
+*.db
+test*.py
+
+
