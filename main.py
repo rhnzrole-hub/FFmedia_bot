@@ -4634,8 +4634,6 @@ async def text_input_handler(client: Client, message: Message):
                 err_msg_text,
                 reply_markup=get_back_to_video_keyboard(),
             )
-                reply_markup=get_back_to_video_keyboard(),
-            )
         finally:
             CANCELLED_TASKS.discard(task_id)
             ACTIVE_PROGRESS.pop(task_id, None)
