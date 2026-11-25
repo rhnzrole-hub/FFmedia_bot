@@ -517,6 +517,52 @@ def get_media_duration(file_path: str) -> int:
     return 0
 
 
+MAX_BOT_UPLOAD_SIZE = 2097152000  # 2000 MiB (Telegram Bot MTProto hard limit)
+
+
+def get_video_dimensions(file_path: str) -> tuple[int, int]:
+    """Returns the video dimensions (width, height) using ffprobe.
+    Returns (0, 0) if extraction fails or not a video.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return 0, 0
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            str(file_path),
+        ]
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        if res.returncode == 0 and "x" in res.stdout:
+            parts = res.stdout.strip().split("x")
+            return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return 0, 0
+
+
+def build_file_too_large_text(file_size: int) -> str:
+    """Returns user-facing explanation when file exceeds Telegram Bot upload limit."""
+    return (
+        f"❌ **Upload Failed: File Exceeds 2 GB Limit!**\n\n"
+        f"• **File Size:** `{humanbytes(file_size)}`\n"
+        f"• **Telegram Bot Limit:** `2.00 GB (2000 MiB)`\n\n"
+        f"⚠️ **Telegram server cheklovi:**\n"
+        f"Telegram Bot API va bot hisoblari orqali **2 GB (2000 MiB) dan katta** fayllarni yuklash imkonsiz. "
+        f"Bu Telegram platformasining server darajasidagi qat'iy cheklovidir (faqat Premium user akkauntlar 4 GB gacha yuklay oladi).\n\n"
+        f"💡 **Yechim:** Faylni qismlarga bo'ling (Trim) yoki video hajmini siqing (Compress)."
+    )
+
+
 def get_audio_ffprobe_info(file_path: str) -> Optional[dict]:
     """
     Runs ffprobe on the given audio file and parses complete stream and container JSON.

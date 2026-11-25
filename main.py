@@ -97,6 +97,9 @@ from helpers import (
     build_video_merger_text,
     fast_merge_video_files,
     format_ffprobe_video_info,
+    get_video_dimensions,
+    MAX_BOT_UPLOAD_SIZE,
+    build_file_too_large_text,
 )
 from keyboards import (
     get_start_keyboard,
@@ -154,7 +157,7 @@ Welcome to **FF Media Bot** — your all-in-one assistant for media files!
 • 🎵 **Handle Audios:** Rename, merge, trim, custom FFmpeg commands, strip metadata.
 • 📁 **Document & File Handling:** Manage archives, documents, and heavy data.
 • 🖼️ **Custom Thumbnails:** Send any photo to set it as your media thumbnail!
-• 🚀 **Large File Support:** Capable of handling up to **4 GB** uploads via Telegram MTProto & Premium!
+• 🚀 **Large File Support:** Capable of handling up to **2 GB** files via high-speed Telegram MTProto!
 
 Send me any **Audio**, **Video**, or **Document** to get started!
 """
@@ -237,12 +240,21 @@ def build_video_menu_text(message: Message) -> str:
 
     if media_type == "video" and info:
         file_name = info.get("file_name", "video.mp4")
-        file_size_str = humanbytes(info.get("file_size", 0))
+        file_size = info.get("file_size", 0)
+        file_size_str = humanbytes(file_size)
         duration_str = format_duration(info.get("duration", 0))
         width = info.get("width")
         height = info.get("height")
         resolution = f"{width}x{height}" if width and height else "Unknown"
         mime_type = info.get("mime_type", "video/mp4")
+
+        limit_warn = ""
+        if file_size > MAX_BOT_UPLOAD_SIZE:
+            limit_warn = (
+                "\n\n⚠️ **Ogohlantirish:** Ushbu fayl hajmi **2 GB dan katta**! "
+                "Telegram botlari faqat 2 GB (2000 MiB) gacha bo'lgan fayllarni qayta yuklay oladi. "
+                "2 GB dan katta natijaviy fayllarni Telegram bot orqali yuborib bo'lmaydi."
+            )
 
         return (
             f"🎬 **Video Management Menu**\n\n"
@@ -250,7 +262,8 @@ def build_video_menu_text(message: Message) -> str:
             f"• **Size:** `{file_size_str}`\n"
             f"• **Duration:** `{duration_str}`\n"
             f"• **Resolution:** `{resolution}`\n"
-            f"• **Format:** `{mime_type}`\n\n"
+            f"• **Format:** `{mime_type}`"
+            f"{limit_warn}\n\n"
             f"👇 **Choose an operation for this video below:**"
         )
     return (
@@ -266,14 +279,23 @@ def build_file_menu_text(message: Message) -> str:
 
     if media_type == "file" and info:
         file_name = info.get("file_name", "document")
-        file_size_str = humanbytes(info.get("file_size", 0))
+        file_size = info.get("file_size", 0)
+        file_size_str = humanbytes(file_size)
         mime_type = info.get("mime_type", "Unknown")
+
+        limit_warn = ""
+        if file_size > MAX_BOT_UPLOAD_SIZE:
+            limit_warn = (
+                "\n\n⚠️ **Ogohlantirish:** Ushbu fayl hajmi **2 GB dan katta**! "
+                "Telegram botlari faqat 2 GB gacha bo'lgan fayllarni qayta yuklay oladi."
+            )
 
         return (
             f"📁 **File Management Menu**\n\n"
             f"• **File Name:** `{file_name}`\n"
             f"• **Size:** `{file_size_str}`\n"
-            f"• **Type:** `{mime_type}`\n\n"
+            f"• **Type:** `{mime_type}`"
+            f"{limit_warn}\n\n"
             f"👇 **Choose an operation for this file below:**"
         )
     return (
@@ -1367,6 +1389,17 @@ async def callback_handler(client: Client, query: CallbackQuery):
         media_msg_id = query.message.reply_to_message_id or (
             query.message.reply_to_message.id if query.message.reply_to_message else None
         )
+        if media_msg_id:
+            target_msg = await get_fresh_media_message(client, query.message.chat.id, media_msg_id)
+            if target_msg:
+                _, t_info = detect_media(target_msg)
+                if t_info.get("file_size", 0) > MAX_BOT_UPLOAD_SIZE:
+                    await query.answer(
+                        "⚠️ Ushbu fayl 2 GB dan katta! Telegram botlari 2 GB dan katta fayllarni qayta yuklay olmaydi.",
+                        show_alert=True,
+                    )
+                    return
+
         if user:
             USER_STATES[user.id] = {
                 "action": "video_rename",
@@ -1669,21 +1702,35 @@ async def callback_handler(client: Client, query: CallbackQuery):
             if len(caption) > 1000:
                 caption = caption[:990] + "..."
 
+            out_size = os.path.getsize(output_path)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await query.message.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             user_thumb = get_user_thumbnail(user.id)
             out_duration = get_media_duration(output_path)
+            vid_w, vid_h = get_video_dimensions(output_path)
 
             target_msg = await get_fresh_media_message(client, query.message.chat.id, state.get("media_msg_id"))
+            vid_info = target_msg.video if target_msg and target_msg.video else None
+            if not vid_w and vid_info:
+                vid_w = vid_info.width or 0
+                vid_h = vid_info.height or 0
+
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
-                vid_info = target_msg.video if target_msg and target_msg.video else None
                 await client.send_video(
                     chat_id=query.message.chat.id,
                     video=output_path,
                     caption=caption,
                     file_name=saved_file_name,
                     duration=out_duration or (vid_info.duration if vid_info else 0),
-                    width=vid_info.width if vid_info else None,
-                    height=vid_info.height if vid_info else None,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -2032,21 +2079,35 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 f"• **Remaining Size:** `{humanbytes(os.path.getsize(output_path))}`"
             )
 
+            out_size = os.path.getsize(output_path)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await query.message.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             user_thumb = get_user_thumbnail(user.id)
             out_duration = get_media_duration(output_path)
+            vid_w, vid_h = get_video_dimensions(output_path)
 
             target_msg = await get_fresh_media_message(client, query.message.chat.id, state.get("media_msg_id"))
+            vid_info = target_msg.video if target_msg and target_msg.video else None
+            if not vid_w and vid_info:
+                vid_w = vid_info.width or 0
+                vid_h = vid_info.height or 0
+
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
-                vid_info = target_msg.video if target_msg and target_msg.video else None
                 await client.send_video(
                     chat_id=query.message.chat.id,
                     video=output_path,
                     caption=caption,
                     file_name=saved_file_name,
                     duration=out_duration or (vid_info.duration if vid_info else 0),
-                    width=vid_info.width if vid_info else None,
-                    height=vid_info.height if vid_info else None,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -2336,6 +2397,15 @@ async def callback_handler(client: Client, query: CallbackQuery):
                     logger.warning(f"Failed to extract stream #{s_idx}: {short_err}")
                     continue
 
+                out_size = os.path.getsize(out_path)
+                if out_size > MAX_BOT_UPLOAD_SIZE:
+                    ACTIVE_PROGRESS.pop(task_id, None)
+                    await query.message.edit_text(
+                        text=build_file_too_large_text(out_size),
+                        reply_markup=get_back_to_video_keyboard(),
+                    )
+                    return
+
                 tracker_up = ProgressTracker(
                     client=client,
                     message=query.message,
@@ -2349,7 +2419,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                     f"📤 **Extracted Stream #{s_idx}** ({item_num}/{total_extract})\n\n"
                     f"• **Type:** `{ctype.capitalize()}` (`{cname}`)\n"
                     f"• **File:** `{out_filename}`\n"
-                    f"• **Size:** `{humanbytes(os.path.getsize(out_path))}`"
+                    f"• **Size:** `{humanbytes(out_size)}`"
                 )
                 if title:
                     caption += f"\n• **Title:** `{title}`"
@@ -2371,12 +2441,15 @@ async def callback_handler(client: Client, query: CallbackQuery):
                         progress=tracker_up,
                     )
                 elif ctype == "video" and not video_as_file:
+                    vid_w, vid_h = get_video_dimensions(out_path)
                     await client.send_video(
                         chat_id=query.message.chat.id,
                         video=out_path,
                         caption=caption,
                         file_name=out_filename,
                         duration=out_duration,
+                        width=vid_w or 0,
+                        height=vid_h or 0,
                         thumb=user_thumb,
                         supports_streaming=True,
                         progress=tracker_up,
@@ -2629,8 +2702,17 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 )
                 return
 
-            out_duration = get_media_duration(output_file) or get_media_duration(downloaded_video)
             out_size = os.path.getsize(output_file)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await query.message.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
+            out_duration = get_media_duration(output_file) or get_media_duration(downloaded_video)
+            vid_w, vid_h = get_video_dimensions(output_file)
             user_thumb = get_user_thumbnail(user.id)
 
             await query.message.edit_text(
@@ -2658,14 +2740,17 @@ async def callback_handler(client: Client, query: CallbackQuery):
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target_msg.video if target_msg and target_msg.video else None
+                if not vid_w and vid_info:
+                    vid_w = vid_info.width or 0
+                    vid_h = vid_info.height or 0
                 await client.send_video(
                     chat_id=query.message.chat.id,
                     video=output_file,
                     caption=caption,
                     file_name=output_filename,
                     duration=out_duration or (vid_info.duration if vid_info else 0),
-                    width=vid_info.width if vid_info else None,
-                    height=vid_info.height if vid_info else None,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -2943,7 +3028,16 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 out_duration = int(total_expected_duration)
 
             out_size = os.path.getsize(output_file)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await query.message.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             user_thumb = get_user_thumbnail(user.id)
+            vid_w, vid_h = get_video_dimensions(output_file)
 
             await query.message.edit_text(
                 "📤 **Uploading Merged Video...**\n\nPreparing upload to Telegram...",
@@ -2967,10 +3061,12 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 "• **Method:** `⚡ Fast Copy (Lossless)`"
             )
 
-            # Use first video's info for width/height
-            first_msg = await get_fresh_media_message(client, query.message.chat.id, videos[0]["msg_id"])
-            vid_w = first_msg.video.width if first_msg and first_msg.video else None
-            vid_h = first_msg.video.height if first_msg and first_msg.video else None
+            # Use first video's info for width/height if ffprobe couldn't extract
+            if not vid_w:
+                first_msg = await get_fresh_media_message(client, query.message.chat.id, videos[0]["msg_id"])
+                if first_msg and first_msg.video:
+                    vid_w = first_msg.video.width or 0
+                    vid_h = first_msg.video.height or 0
 
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
@@ -2979,8 +3075,8 @@ async def callback_handler(client: Client, query: CallbackQuery):
                     video=output_file,
                     caption=caption,
                     duration=out_duration,
-                    width=vid_w,
-                    height=vid_h,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     file_name=output_filename,
                     thumb=user_thumb,
                     supports_streaming=True,
@@ -3233,9 +3329,18 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 )
                 return
 
+            out_size = os.path.getsize(final_output_file)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await query.message.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             out_filename = os.path.basename(final_output_file)
             out_duration = get_media_duration(final_output_file) or get_media_duration(downloaded_video)
-            out_size = os.path.getsize(final_output_file)
+            vid_w, vid_h = get_video_dimensions(final_output_file)
             user_thumb = get_user_thumbnail(user.id)
 
             await query.message.edit_text(
@@ -3263,14 +3368,17 @@ async def callback_handler(client: Client, query: CallbackQuery):
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target_msg.video if target_msg and target_msg.video else None
+                if not vid_w and vid_info:
+                    vid_w = vid_info.width or 0
+                    vid_h = vid_info.height or 0
                 await client.send_video(
                     chat_id=query.message.chat.id,
                     video=final_output_file,
                     caption=caption,
                     file_name=out_filename,
                     duration=out_duration or (vid_info.duration if vid_info else 0),
-                    width=vid_info.width if vid_info else None,
-                    height=vid_info.height if vid_info else None,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -4029,6 +4137,15 @@ async def text_input_handler(client: Client, message: Message):
             renamed_path = os.path.join(temp_dir, new_file_name)
             os.rename(downloaded, renamed_path)
 
+            out_size = os.path.getsize(renamed_path)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await menu_msg.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             tracker_up = ProgressTracker(
                 client=client,
                 message=menu_msg,
@@ -4040,6 +4157,10 @@ async def text_input_handler(client: Client, message: Message):
 
             caption = f"✏️ **Renamed to:** `{new_file_name}`"
             user_thumb = get_user_thumbnail(user_id)
+            vid_w, vid_h = get_video_dimensions(renamed_path)
+            if not vid_w:
+                vid_w = info.get("width") or 0
+                vid_h = info.get("height") or 0
 
             user_settings = get_user_settings(user_id)
             if user_settings.get("upload_video") != "file":
@@ -4050,8 +4171,8 @@ async def text_input_handler(client: Client, message: Message):
                     caption=caption,
                     file_name=new_file_name,
                     duration=out_duration,
-                    width=info.get("width"),
-                    height=info.get("height"),
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -4085,8 +4206,9 @@ async def text_input_handler(client: Client, message: Message):
                 pass
         except Exception as e:
             logger.error(f"Error during video rename: {e}", exc_info=True)
+            err_msg_text = build_file_too_large_text(out_size if 'out_size' in locals() else 0) if ("2000 MiB" in str(e) or "bigger than" in str(e)) else f"❌ **Error during rename:** `{e}`"
             await menu_msg.edit_text(
-                f"❌ **Error during rename:** `{e}`",
+                err_msg_text,
                 reply_markup=get_back_to_video_keyboard(),
             )
         finally:
@@ -4276,7 +4398,17 @@ async def text_input_handler(client: Client, message: Message):
             if task_id in CANCELLED_TASKS:
                 return
 
+            out_size = os.path.getsize(trimmed_path)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await menu_msg.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             out_duration = get_media_duration(trimmed_path)
+            vid_w, vid_h = get_video_dimensions(trimmed_path)
 
             tracker_up = ProgressTracker(
                 client=client,
@@ -4298,14 +4430,17 @@ async def text_input_handler(client: Client, message: Message):
             user_settings = get_user_settings(user_id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target.video if target and target.video else None
+                if not vid_w and vid_info:
+                    vid_w = vid_info.width or 0
+                    vid_h = vid_info.height or 0
                 await client.send_video(
                     chat_id=chat_id,
                     video=trimmed_path,
                     caption=caption,
                     file_name=trimmed_name,
                     duration=out_duration or (vid_info.duration if vid_info else 0),
-                    width=vid_info.width if vid_info else None,
-                    height=vid_info.height if vid_info else None,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -4339,8 +4474,9 @@ async def text_input_handler(client: Client, message: Message):
                 pass
         except Exception as e:
             logger.error(f"Error during video trim: {e}", exc_info=True)
+            err_msg_text = build_file_too_large_text(out_size if 'out_size' in locals() else 0) if ("2000 MiB" in str(e) or "bigger than" in str(e)) else f"❌ **Error during video trim:** `{e}`"
             await menu_msg.edit_text(
-                f"❌ **Error during video trim:** `{e}`",
+                err_msg_text,
                 reply_markup=get_back_to_video_keyboard(),
             )
         finally:
@@ -4419,7 +4555,17 @@ async def text_input_handler(client: Client, message: Message):
             if task_id in CANCELLED_TASKS:
                 return
 
+            out_size = os.path.getsize(output_path)
+            if out_size > MAX_BOT_UPLOAD_SIZE:
+                ACTIVE_PROGRESS.pop(task_id, None)
+                await menu_msg.edit_text(
+                    text=build_file_too_large_text(out_size),
+                    reply_markup=get_back_to_video_keyboard(),
+                )
+                return
+
             out_duration = get_media_duration(output_path) or int(target_duration)
+            vid_w, vid_h = get_video_dimensions(output_path)
             user_thumb = get_user_thumbnail(user_id)
 
             tracker_up = ProgressTracker(
@@ -4440,14 +4586,17 @@ async def text_input_handler(client: Client, message: Message):
             user_settings = get_user_settings(user_id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target.video if target and target.video else None
+                if not vid_w and vid_info:
+                    vid_w = vid_info.width or 0
+                    vid_h = vid_info.height or 0
                 await client.send_video(
                     chat_id=chat_id,
                     video=output_path,
                     caption=caption,
                     file_name=output_name,
                     duration=out_duration,
-                    width=vid_info.width if vid_info else None,
-                    height=vid_info.height if vid_info else None,
+                    width=vid_w or 0,
+                    height=vid_h or 0,
                     thumb=user_thumb,
                     supports_streaming=True,
                     progress=tracker_up,
@@ -4480,8 +4629,11 @@ async def text_input_handler(client: Client, message: Message):
                 pass
         except Exception as e:
             logger.error(f"Error during video FFmpeg processing: {e}", exc_info=True)
+            err_msg_text = build_file_too_large_text(out_size if 'out_size' in locals() else 0) if ("2000 MiB" in str(e) or "bigger than" in str(e)) else f"❌ **Error during FFmpeg processing:** `{e}`"
             await menu_msg.edit_text(
-                f"❌ **Error during FFmpeg processing:** `{e}`",
+                err_msg_text,
+                reply_markup=get_back_to_video_keyboard(),
+            )
                 reply_markup=get_back_to_video_keyboard(),
             )
         finally:
