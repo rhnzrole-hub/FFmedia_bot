@@ -518,6 +518,7 @@ def get_media_duration(file_path: str) -> int:
 
 
 MAX_BOT_UPLOAD_SIZE = 2097152000  # 2000 MiB (Telegram Bot MTProto hard limit)
+MAX_PREMIUM_UPLOAD_SIZE = 4194304000  # 4000 MiB (Telegram Premium limit)
 
 
 def get_video_dimensions(file_path: str) -> tuple[int, int]:
@@ -550,15 +551,24 @@ def get_video_dimensions(file_path: str) -> tuple[int, int]:
     return 0, 0
 
 
-def build_file_too_large_text(file_size: int) -> str:
+def build_file_too_large_text(file_size: int, has_premium_session: bool = False) -> str:
     """Returns user-facing explanation when file exceeds Telegram Bot upload limit."""
+    if has_premium_session:
+        return (
+            f"❌ **Upload Failed: File Exceeds 4 GB Limit!**\n\n"
+            f"• **File Size:** `{humanbytes(file_size)}`\n"
+            f"• **Telegram Premium Limit:** `4.00 GB (4000 MiB)`\n\n"
+            f"⚠️ Telegram hatto Premium akkauntlar uchun ham 4 GB dan katta fayllarni qabul qilmaydi.\n"
+            f"💡 **Yechim:** Faylni qismlarga bo'ling (Trim)."
+        )
     return (
         f"❌ **Upload Failed: File Exceeds 2 GB Limit!**\n\n"
         f"• **File Size:** `{humanbytes(file_size)}`\n"
         f"• **Telegram Bot Limit:** `2.00 GB (2000 MiB)`\n\n"
         f"⚠️ **Telegram server cheklovi:**\n"
-        f"Telegram Bot API va bot hisoblari orqali **2 GB (2000 MiB) dan katta** fayllarni yuklash imkonsiz. "
-        f"Bu Telegram platformasining server darajasidagi qat'iy cheklovidir (faqat Premium user akkauntlar 4 GB gacha yuklay oladi).\n\n"
+        f"Telegram Bot hisoblari orqali faqat **2 GB (2000 MiB) gacha** fayllarni yuklash mumkin.\n\n"
+        f"💎 **4 GB gacha yuklash yechimi:**\n"
+        f"Sizda Telegram Premium bor bo'lsa, bot `.env` fayliga `USER_SESSION_STRING` kiritilsa, bot 4 GB gacha bo'lgan fayllarni Premium akkauntingiz orqali to'liq yuklab beradi!\n\n"
         f"💡 **Yechim:** Faylni qismlarga bo'ling (Trim) yoki video hajmini siqing (Compress)."
     )
 
