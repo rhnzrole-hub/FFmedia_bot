@@ -171,6 +171,21 @@ def get_upload_client(file_size: int, default_client: Client) -> Client:
     return default_client
 
 
+async def ensure_upload_client(file_size: int, default_client: Client, chat_id: int) -> Client:
+    """
+    Returns the appropriate upload client for the given file size.
+    If user_client is selected (for >2GB files), first resolves the peer (chat_id)
+    so Telegram does not raise PEER_ID_INVALID on the upload call.
+    """
+    uploader = get_upload_client(file_size, default_client)
+    if uploader is not default_client and uploader is user_client:
+        try:
+            await user_client.get_chat(chat_id)
+        except Exception as e:
+            logger.warning(f"ensure_upload_client: could not resolve peer {chat_id} via user_client: {e}")
+    return uploader
+
+
 # In-memory dictionary for active user input states
 # Structure: {user_id: {"action": str, "menu_msg_id": int, "media_msg_id": int, "chat_id": int}}
 USER_STATES = {}
@@ -1752,7 +1767,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 vid_w = vid_info.width or 0
                 vid_h = vid_info.height or 0
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, query.message.chat.id)
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 await uploader.send_video(
@@ -2130,7 +2145,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 vid_w = vid_info.width or 0
                 vid_h = vid_info.height or 0
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, query.message.chat.id)
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 await uploader.send_video(
@@ -2458,7 +2473,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                     caption += f"\n• **Title:** `{title}`"
 
                 out_duration = get_media_duration(out_path)
-                uploader = get_upload_client(out_size, client)
+                uploader = await ensure_upload_client(out_size, client, query.message.chat.id)
 
                 user_settings = get_user_settings(user.id)
                 audio_as_file = user_settings.get("upload_audio") == "file"
@@ -2771,7 +2786,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 f"• **Size:** `{humanbytes(out_size)}`"
             )
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, query.message.chat.id)
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target_msg.video if target_msg and target_msg.video else None
@@ -3103,7 +3118,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                     vid_w = first_msg.video.width or 0
                     vid_h = first_msg.video.height or 0
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, query.message.chat.id)
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 await uploader.send_video(
@@ -3401,7 +3416,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
                 f"• **Size:** `{humanbytes(out_size)}`"
             )
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, query.message.chat.id)
             user_settings = get_user_settings(user.id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target_msg.video if target_msg and target_msg.video else None
@@ -4199,7 +4214,7 @@ async def text_input_handler(client: Client, message: Message):
                 vid_w = info.get("width") or 0
                 vid_h = info.get("height") or 0
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, chat_id)
             user_settings = get_user_settings(user_id)
             if user_settings.get("upload_video") != "file":
                 out_duration = get_media_duration(renamed_path) or info.get("duration", 0)
@@ -4465,7 +4480,7 @@ async def text_input_handler(client: Client, message: Message):
 
             user_thumb = get_user_thumbnail(user_id)
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, chat_id)
             user_settings = get_user_settings(user_id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target.video if target and target.video else None
@@ -4622,7 +4637,7 @@ async def text_input_handler(client: Client, message: Message):
                 f"• **File:** `{output_name}`"
             )
 
-            uploader = get_upload_client(out_size, client)
+            uploader = await ensure_upload_client(out_size, client, chat_id)
             user_settings = get_user_settings(user_id)
             if user_settings.get("upload_video") != "file":
                 vid_info = target.video if target and target.video else None
